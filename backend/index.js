@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 
@@ -12,7 +13,71 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
-const db = new sqlite3.Database('sermoes.db');
+
+const databaseUrl = process.env.DATABASE_URL;
+const usePostgres = Boolean(databaseUrl) ||
+  process.env.NODE_ENV === 'production' ||
+  process.env.RENDER === 'true';
+
+let db;
+if (usePostgres) {
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL não configurada para o ambiente PostgreSQL.');
+  }
+
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  });
+  db = {
+    query: (sql, params) => pool.query(sql, params),
+    end: () => pool.end()
+  };
+} else {
+  const sqliteDb = new sqlite3.Database(path.join(__dirname, 'sermoes.db'));
+  db = {
+    query(sql, params = []) {
+      const sqliteParams = [];
+      const sqliteSql = sql
+        .replace(/\bSERIAL\s+PRIMARY KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
+        .replace(/\$(\d+)/g, (_, index) => {
+          sqliteParams.push(params[Number(index) - 1]);
+          return '?';
+        });
+      const returnsRows = /^\s*(SELECT|PRAGMA)\b/i.test(sql) || /\bRETURNING\b/i.test(sql);
+
+      return new Promise((resolve, reject) => {
+        if (returnsRows) {
+          sqliteDb.all(sqliteSql, sqliteParams, (err, rows) => {
+            if (err) {
+              if (err.code === 'SQLITE_CONSTRAINT' &&
+                  /UNIQUE constraint failed|PRIMARY KEY/i.test(err.message)) {
+                err.code = '23505';
+              }
+              return reject(err);
+            }
+            resolve({ rows, rowCount: rows.length });
+          });
+          return;
+        }
+
+        sqliteDb.run(sqliteSql, sqliteParams, function (err) {
+          if (err) {
+            if (err.code === 'SQLITE_CONSTRAINT' &&
+                /UNIQUE constraint failed|PRIMARY KEY/i.test(err.message)) {
+              err.code = '23505';
+            }
+            return reject(err);
+          }
+          resolve({ rows: [], rowCount: this.changes, lastID: this.lastID });
+        });
+      });
+    },
+    end: () => new Promise((resolve, reject) => {
+      sqliteDb.close((err) => err ? reject(err) : resolve());
+    })
+  };
+}
 
 // Middleware para autenticação simples por header (usuario/perfil)
 function authMiddleware(req, res, next) {
@@ -28,51 +93,41 @@ function authMiddleware(req, res, next) {
 }
 
 // Alterar a própria senha
-app.post('/api/usuarios/alterar-senha', authMiddleware, (req, res) => {
+app.post('/api/usuarios/alterar-senha', authMiddleware, async (req, res) => {
   const { senhaAtual, novaSenha } = req.body;
   const usuario = req.usuario;
-  console.log('Requisição de alteração de senha para:', usuario);
   if (!senhaAtual || !novaSenha) {
-    console.log('Campos obrigatórios não preenchidos');
     return res.status(400).json({ erro: 'Campos obrigatórios.' });
   }
-  db.get('SELECT * FROM usuarios WHERE usuario = ?', [usuario], (err, user) => {
-    if (err) {
-      console.log('Erro ao buscar usuário:', err.message);
-      return res.status(500).json({ erro: err.message });
-    }
-    if (!user) {
-      console.log('Usuário não encontrado:', usuario);
-      return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    }
+  try {
+    const { rows } = await db.query('SELECT * FROM usuarios WHERE usuario = $1', [usuario]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     if (!bcrypt.compareSync(senhaAtual, user.senha)) {
-      console.log('Senha atual incorreta para usuário:', usuario);
       return res.status(401).json({ erro: 'Senha atual incorreta.' });
     }
     const hash = bcrypt.hashSync(novaSenha, 10);
-    db.run('UPDATE usuarios SET senha = ? WHERE usuario = ?', [hash, usuario], function(err) {
-      if (err) {
-        console.log('Erro ao atualizar senha:', err.message);
-        return res.status(500).json({ erro: err.message });
-      }
-      console.log('Senha alterada com sucesso para:', usuario);
-      res.json({ ok: true });
-    });
-  });
+    await db.query('UPDATE usuarios SET senha = $1 WHERE usuario = $2', [hash, usuario]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Admin: resetar senha de outro usuário
-app.post('/api/usuarios/resetar-senha', authMiddleware, (req, res) => {
+app.post('/api/usuarios/resetar-senha', authMiddleware, async (req, res) => {
   const { usuarioAlvo, novaSenha } = req.body;
   const perfil = req.perfil;
   if (perfil !== 'admin') return res.status(403).json({ erro: 'Apenas admin pode resetar senha.' });
   if (!usuarioAlvo || !novaSenha) return res.status(400).json({ erro: 'Campos obrigatórios.' });
   const hash = bcrypt.hashSync(novaSenha, 10);
-  db.run('UPDATE usuarios SET senha = ? WHERE usuario = ?', [hash, usuarioAlvo], function(err) {
-    if (err) return res.status(500).json({ erro: err.message });
-    if (this.changes === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+  try {
+    const result = await db.query('UPDATE usuarios SET senha = $1 WHERE usuario = $2', [hash, usuarioAlvo]);
+    if (result.rowCount === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     res.json({ ok: true });
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Rota para servir o conteúdo da Bíblia
@@ -125,192 +180,194 @@ app.get('/api/livros', (req, res) => {
 
 
 
-// --- CRUD de Sermões (SQLite) ---
-
-// Cria tabelas se não existirem
-db.serialize(() => {
-  // Adiciona campo usuario na tabela de sermoes, se não existir
-  db.run(`CREATE TABLE IF NOT EXISTS sermoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+async function initializeDatabase() {
+  await db.query(`CREATE TABLE IF NOT EXISTS sermoes (
+    id SERIAL PRIMARY KEY,
     nome TEXT NOT NULL,
     conteudo TEXT NOT NULL,
-    dataHora TEXT NOT NULL,
+    datahora TEXT NOT NULL,
     local TEXT NOT NULL,
     usuario TEXT
   )`);
-  // Cria tabela de estudos se não existir
-  db.run(`CREATE TABLE IF NOT EXISTS estudos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+  if (usePostgres) {
+    await db.query('ALTER TABLE sermoes ADD COLUMN IF NOT EXISTS usuario TEXT');
+  } else {
+    const { rows: columns } = await db.query('PRAGMA table_info(sermoes)');
+    if (!columns.some(column => column.name === 'usuario')) {
+      await db.query('ALTER TABLE sermoes ADD COLUMN usuario TEXT');
+    }
+  }
+  await db.query("UPDATE sermoes SET usuario = 'admin' WHERE usuario IS NULL");
+
+  await db.query(`CREATE TABLE IF NOT EXISTS estudos (
+    id SERIAL PRIMARY KEY,
     titulo TEXT NOT NULL,
     tema TEXT NOT NULL,
     conteudo TEXT NOT NULL,
-    dataHora TEXT NOT NULL,
+    datahora TEXT NOT NULL,
     usuario TEXT
   )`);
-  // Adiciona a coluna usuario se não existir (para bases já criadas)
-  db.get("PRAGMA table_info(sermoes)", (err, info) => {
-    db.all("PRAGMA table_info(sermoes)", (err, columns) => {
-      if (!columns.some(col => col.name === 'usuario')) {
-        db.run('ALTER TABLE sermoes ADD COLUMN usuario TEXT', () => {
-          // Após adicionar, atualizar todos para admin
-          db.run("UPDATE sermoes SET usuario = 'admin' WHERE usuario IS NULL");
-        });
-      } else {
-        // Se já existe, garantir que registros antigos tenham admin
-        db.run("UPDATE sermoes SET usuario = 'admin' WHERE usuario IS NULL");
-      }
-    });
-  });
-  db.run(`CREATE TABLE IF NOT EXISTS usuarios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  await db.query(`CREATE TABLE IF NOT EXISTS usuarios (
+    id SERIAL PRIMARY KEY,
     usuario TEXT UNIQUE NOT NULL,
     senha TEXT NOT NULL,
     perfil TEXT NOT NULL CHECK(perfil IN ('read','edit','admin'))
   )`);
-  // Cria usuário admin padrão se não existir
-  db.get('SELECT * FROM usuarios WHERE usuario = ?', ['admin'], (err, row) => {
-    if (!row) {
-      const hash = bcrypt.hashSync('123456', 10);
-      db.run('INSERT INTO usuarios (usuario, senha, perfil) VALUES (?, ?, ?)', ['admin', hash, 'admin']);
-    }
-  });
-});
+
+  const hash = bcrypt.hashSync('123456', 10);
+  await db.query(
+    'INSERT INTO usuarios (usuario, senha, perfil) VALUES ($1, $2, $3) ON CONFLICT (usuario) DO NOTHING',
+    ['admin', hash, 'admin']
+  );
+}
 
 // --- CRUD de Usuários ---
 // Listar usuários (sem senha)
-app.get('/api/usuarios', (req, res) => {
-  db.all('SELECT id, usuario, perfil FROM usuarios', (err, rows) => {
-    if (err) return res.status(500).json({ erro: err.message });
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT id, usuario, perfil FROM usuarios');
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Criar usuário
-app.post('/api/usuarios', (req, res) => {
+app.post('/api/usuarios', async (req, res) => {
   const { usuario, senha, perfil } = req.body;
   if (!usuario || !senha || !perfil) return res.status(400).json({ erro: 'Campos obrigatórios.' });
   if (!['read','edit','admin'].includes(perfil)) return res.status(400).json({ erro: 'Perfil inválido.' });
   const hash = bcrypt.hashSync(senha, 10);
-  db.run('INSERT INTO usuarios (usuario, senha, perfil) VALUES (?, ?, ?)', [usuario, hash, perfil], function(err) {
-    if (err) return res.status(400).json({ erro: 'Usuário já existe.' });
-    db.get('SELECT id, usuario, perfil FROM usuarios WHERE id = ?', [this.lastID], (err, row) => {
-      if (err) return res.status(500).json({ erro: err.message });
-      res.status(201).json(row);
-    });
-  });
+  try {
+    const insert = await db.query('INSERT INTO usuarios (usuario, senha, perfil) VALUES ($1, $2, $3) RETURNING id, usuario, perfil', [usuario, hash, perfil]);
+    res.status(201).json(insert.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ erro: 'Usuário já existe.' });
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Editar usuário (exceto senha)
-app.put('/api/usuarios/:id', (req, res) => {
+app.put('/api/usuarios/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   const { usuario, perfil } = req.body;
   if (!usuario || !perfil) return res.status(400).json({ erro: 'Campos obrigatórios.' });
   if (!['read','edit','admin'].includes(perfil)) return res.status(400).json({ erro: 'Perfil inválido.' });
-  db.run('UPDATE usuarios SET usuario = ?, perfil = ? WHERE id = ?', [usuario, perfil, id], function(err) {
-    if (err) return res.status(400).json({ erro: 'Usuário já existe.' });
-    db.get('SELECT id, usuario, perfil FROM usuarios WHERE id = ?', [id], (err, row) => {
-      if (err) return res.status(500).json({ erro: err.message });
-      if (!row) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-      res.json(row);
-    });
-  });
+  try {
+    const update = await db.query('UPDATE usuarios SET usuario = $1, perfil = $2 WHERE id = $3 RETURNING id, usuario, perfil', [usuario, perfil, id]);
+    if (update.rows.length === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    res.json(update.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ erro: 'Usuário já existe.' });
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Excluir usuário
-app.delete('/api/usuarios/:id', (req, res) => {
+app.delete('/api/usuarios/:id', async (req, res) => {
   const id = parseInt(req.params.id);
-  db.run('DELETE FROM usuarios WHERE id = ?', [id], function(err) {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    await db.query('DELETE FROM usuarios WHERE id = $1', [id]);
     res.status(204).end();
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // --- CRUD de Estudos Bíblicos (SQLite) ---
 // Listar estudos
-app.get('/api/estudos', authMiddleware, (req, res) => {
-  db.all('SELECT * FROM estudos ORDER BY dataHora DESC', (err, rows) => {
-    if (err) return res.status(500).json({ erro: err.message });
+app.get('/api/estudos', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT id, titulo, tema, conteudo, datahora AS "dataHora", usuario FROM estudos ORDER BY datahora DESC'
+    );
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Criar estudo
-app.post('/api/estudos', authMiddleware, (req, res) => {
+app.post('/api/estudos', authMiddleware, async (req, res) => {
   const { titulo, tema, conteudo } = req.body;
   const usuario = req.usuario;
   if (!titulo || !tema || !conteudo) return res.status(400).json({ erro: 'Campos obrigatórios.' });
   const dataHora = new Date().toISOString();
-  db.run('INSERT INTO estudos (titulo, tema, conteudo, dataHora, usuario) VALUES (?, ?, ?, ?, ?)',
-    [titulo, tema, conteudo, dataHora, usuario], function(err) {
-      if (err) return res.status(500).json({ erro: err.message });
-      db.get('SELECT * FROM estudos WHERE id = ?', [this.lastID], (err, row) => {
-        if (err) return res.status(500).json({ erro: err.message });
-        res.status(201).json(row);
-      });
-    });
+  try {
+    const insert = await db.query(
+      'INSERT INTO estudos (titulo, tema, conteudo, datahora, usuario) VALUES ($1, $2, $3, $4, $5) RETURNING id, titulo, tema, conteudo, datahora AS "dataHora", usuario',
+      [titulo, tema, conteudo, dataHora, usuario]
+    );
+    res.status(201).json(insert.rows[0]);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Editar estudo
-app.put('/api/estudos/:id', authMiddleware, (req, res) => {
+app.put('/api/estudos/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const { titulo, tema, conteudo } = req.body;
   const usuario = req.usuario;
   const perfil = req.perfil;
   if (!titulo || !tema || !conteudo) return res.status(400).json({ erro: 'Campos obrigatórios.' });
-  db.get('SELECT * FROM estudos WHERE id = ?', [id], (err, estudo) => {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    const { rows } = await db.query(
+      'SELECT id, titulo, tema, conteudo, datahora AS "dataHora", usuario FROM estudos WHERE id = $1',
+      [id]
+    );
+    const estudo = rows[0];
     if (!estudo) return res.status(404).json({ erro: 'Estudo não encontrado.' });
     if (perfil !== 'admin' && estudo.usuario !== usuario) {
       return res.status(403).json({ erro: 'Sem permissão para editar.' });
     }
-    db.run('UPDATE estudos SET titulo = ?, tema = ?, conteudo = ? WHERE id = ?',
-      [titulo, tema, conteudo, id], function(err) {
-        if (err) return res.status(500).json({ erro: err.message });
-        db.get('SELECT * FROM estudos WHERE id = ?', [id], (err, row) => {
-          if (err) return res.status(500).json({ erro: err.message });
-          res.json(row);
-        });
-      });
-  });
+    const update = await db.query(
+      'UPDATE estudos SET titulo = $1, tema = $2, conteudo = $3 WHERE id = $4 RETURNING id, titulo, tema, conteudo, datahora AS "dataHora", usuario',
+      [titulo, tema, conteudo, id]
+    );
+    res.json(update.rows[0]);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Excluir estudo
-app.delete('/api/estudos/:id', authMiddleware, (req, res) => {
+app.delete('/api/estudos/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const usuario = req.usuario;
   const perfil = req.perfil;
-  db.get('SELECT * FROM estudos WHERE id = ?', [id], (err, estudo) => {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    const { rows } = await db.query(
+      'SELECT id, titulo, tema, conteudo, datahora AS "dataHora", usuario FROM estudos WHERE id = $1',
+      [id]
+    );
+    const estudo = rows[0];
     if (!estudo) return res.status(404).json({ erro: 'Estudo não encontrado.' });
     if (perfil !== 'admin' && estudo.usuario !== usuario) {
       return res.status(403).json({ erro: 'Sem permissão para excluir.' });
     }
-    db.run('DELETE FROM estudos WHERE id = ?', [id], function(err) {
-      if (err) return res.status(500).json({ erro: err.message });
-      res.json({ ok: true });
-    });
-  });
+    await db.query('DELETE FROM estudos WHERE id = $1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Listar todos os sermões (restrição de visualização)
-app.get('/api/sermoes', authMiddleware, (req, res) => {
-  const { usuario, perfil } = req;
-  let query = 'SELECT * FROM sermoes';
-  let params = [];
-  if (perfil === 'edit') {
-    // Edit pode ver todos, mas só editar/excluir os seus
-    // (restrição só nas rotas de edição/exclusão)
-  } else if (perfil === 'read') {
-    // Read pode ver todos
-  }
-  db.all(query, params, (err, rows) => {
-    if (err) return res.status(500).json({ erro: err.message });
+app.get('/api/sermoes', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT id, nome, conteudo, datahora AS "dataHora", local, usuario FROM sermoes'
+    );
     res.json(rows);
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Criar novo sermão (qualquer perfil pode criar, mas só read não pode)
-app.post('/api/sermoes', authMiddleware, (req, res) => {
+app.post('/api/sermoes', authMiddleware, async (req, res) => {
   const { nome, conteudo, dataHora, local } = req.body;
   const usuario = req.usuario;
   const perfil = req.perfil;
@@ -320,28 +377,29 @@ app.post('/api/sermoes', authMiddleware, (req, res) => {
   if (perfil === 'read') {
     return res.status(403).json({ erro: 'Usuário sem permissão para criar sermão.' });
   }
-  db.run(
-    'INSERT INTO sermoes (nome, conteudo, dataHora, local, usuario) VALUES (?, ?, ?, ?, ?)',
-    [nome, conteudo, dataHora, local, usuario],
-    function (err) {
-      if (err) return res.status(500).json({ erro: err.message });
-      db.get('SELECT * FROM sermoes WHERE id = ?', [this.lastID], (err, row) => {
-        if (err) return res.status(500).json({ erro: err.message });
-        res.status(201).json(row);
-      });
-    }
-  );
+  try {
+    const insert = await db.query(
+      'INSERT INTO sermoes (nome, conteudo, datahora, local, usuario) VALUES ($1, $2, $3, $4, $5) RETURNING id, nome, conteudo, datahora AS "dataHora", local, usuario',
+      [nome, conteudo, dataHora, local, usuario]
+    );
+    res.status(201).json(insert.rows[0]);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Editar sermão (restrição por perfil)
-app.put('/api/sermoes/:id', authMiddleware, (req, res) => {
+app.put('/api/sermoes/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const { nome, conteudo, dataHora, local } = req.body;
   const usuario = req.usuario;
   const perfil = req.perfil;
-  // Admin pode editar tudo, edit só os seus, read não pode
-  db.get('SELECT * FROM sermoes WHERE id = ?', [id], (err, sermao) => {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    const { rows } = await db.query(
+      'SELECT id, nome, conteudo, datahora AS "dataHora", local, usuario FROM sermoes WHERE id = $1',
+      [id]
+    );
+    const sermao = rows[0];
     if (!sermao) return res.status(404).json({ erro: 'Sermão não encontrado.' });
     if (perfil === 'read') {
       return res.status(403).json({ erro: 'Usuário sem permissão para editar sermão.' });
@@ -349,28 +407,28 @@ app.put('/api/sermoes/:id', authMiddleware, (req, res) => {
     if (perfil === 'edit' && sermao.usuario !== usuario) {
       return res.status(403).json({ erro: 'Só pode editar seus próprios sermões.' });
     }
-    db.run(
-      'UPDATE sermoes SET nome = ?, conteudo = ?, dataHora = ?, local = ? WHERE id = ?',
-      [nome, conteudo, dataHora, local, id],
-      function (err) {
-        if (err) return res.status(500).json({ erro: err.message });
-        db.get('SELECT * FROM sermoes WHERE id = ?', [id], (err, row) => {
-          if (err) return res.status(500).json({ erro: err.message });
-          if (!row) return res.status(404).json({ erro: 'Sermão não encontrado.' });
-          res.json(row);
-        });
-      }
+    const update = await db.query(
+      'UPDATE sermoes SET nome = $1, conteudo = $2, datahora = $3, local = $4 WHERE id = $5 RETURNING id, nome, conteudo, datahora AS "dataHora", local, usuario',
+      [nome, conteudo, dataHora, local, id]
     );
-  });
+    if (update.rows.length === 0) return res.status(404).json({ erro: 'Sermão não encontrado.' });
+    res.json(update.rows[0]);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 // Excluir sermão (restrição por perfil)
-app.delete('/api/sermoes/:id', authMiddleware, (req, res) => {
+app.delete('/api/sermoes/:id', authMiddleware, async (req, res) => {
   const id = parseInt(req.params.id);
   const usuario = req.usuario;
   const perfil = req.perfil;
-  db.get('SELECT * FROM sermoes WHERE id = ?', [id], (err, sermao) => {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    const { rows } = await db.query(
+      'SELECT id, nome, conteudo, datahora AS "dataHora", local, usuario FROM sermoes WHERE id = $1',
+      [id]
+    );
+    const sermao = rows[0];
     if (!sermao) return res.status(404).json({ erro: 'Sermão não encontrado.' });
     if (perfil === 'read') {
       return res.status(403).json({ erro: 'Usuário sem permissão para excluir sermão.' });
@@ -378,22 +436,23 @@ app.delete('/api/sermoes/:id', authMiddleware, (req, res) => {
     if (perfil === 'edit' && sermao.usuario !== usuario) {
       return res.status(403).json({ erro: 'Só pode excluir seus próprios sermões.' });
     }
-    db.run('DELETE FROM sermoes WHERE id = ?', [id], function (err) {
-      if (err) return res.status(500).json({ erro: err.message });
-      res.status(204).end();
-    });
-  });
+    await db.query('DELETE FROM sermoes WHERE id = $1', [id]);
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
 
 // Rota de login
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { usuario, senha } = req.body;
   if (!usuario || !senha) {
     return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
   }
-  db.get('SELECT * FROM usuarios WHERE usuario = ?', [usuario], (err, user) => {
-    if (err) return res.status(500).json({ erro: err.message });
+  try {
+    const { rows } = await db.query('SELECT * FROM usuarios WHERE usuario = $1', [usuario]);
+    const user = rows[0];
     if (!user) return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
     if (!bcrypt.compareSync(senha, user.senha)) {
       return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
@@ -401,9 +460,38 @@ app.post('/api/login', (req, res) => {
     // Não retorna a senha
     const { id, usuario: nome, perfil } = user;
     res.json({ id, usuario: nome, perfil });
-  });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor backend rodando na porta ${PORT}`);
+app.get('/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.status(200).send('ok');
+  } catch (err) {
+    console.error('Health check database query failed:', err);
+    res.status(503).send('database unavailable');
+  }
 });
+
+const frontendBuildPath = path.join(__dirname, '..', 'frontend', 'build');
+app.use(express.static(frontendBuildPath));
+app.get(/.*/, (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ erro: 'Rota não encontrada.' });
+  }
+  res.sendFile(path.join(frontendBuildPath, 'index.html'));
+});
+
+initializeDatabase()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Servidor backend rodando na porta ${PORT}`);
+    });
+  })
+  .catch(async (err) => {
+    console.error('Falha ao inicializar o banco de dados:', err);
+    await db.end();
+    process.exitCode = 1;
+  });

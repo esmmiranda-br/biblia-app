@@ -19,16 +19,48 @@ npm run build # build de produção
 
 ### Backend
 
-```bash
+No computador local, o backend usa SQLite e persiste os dados em `backend/sermoes.db`. Não é necessário instalar nem configurar um servidor de banco de dados.
+
+```powershell
 cd backend
-npm run dev # inicia o backend com nodemon
-npm start   # inicia o backend normalmente
+npm run dev
 ```
+
+Para iniciar sem o Nodemon, use `npm start` dentro da pasta `backend`.
+
+No Render, configure `DATABASE_URL` nas variáveis de ambiente do serviço backend para usar PostgreSQL. O backend escolhe PostgreSQL quando essa variável está definida ou quando roda no Render; localmente, sem ela, usa SQLite.
 
 ## Exemplo de uso
 
 - Acesse http://localhost:3000 para o frontend
 - O frontend consome a API do backend em http://localhost:4000
+
+## Publicar no Render
+
+O serviço web pode servir o frontend React e a API Express no mesmo domínio. Configure-o para usar o repositório `esmmiranda-br/biblia-app`, branch `main`, sem Root Directory, com:
+
+- Build Command: `npm ci --prefix frontend && npm ci --prefix backend && npm run build --prefix frontend`
+- Start Command: `npm start --prefix backend`
+- Environment: `NODE_ENV=production` e `DATABASE_URL` apontando para o banco `biblia_app` no Neon.
+
+Use um banco separado para este aplicativo. O banco `neondb` pode conter dados de outra aplicação e não deve ser reutilizado com o esquema do Bíblia-app.
+
+As chamadas do frontend usam caminhos `/api/...`, então o proxy de desenvolvimento as direciona para a API local e, em produção, elas permanecem no mesmo domínio. O backend serve os arquivos gerados em `frontend/build`.
+
+Para migrar os registros locais para um banco Neon vazio, primeiro confira o plano sem gravar:
+
+```powershell
+cd backend
+npm run db:import-sqlite
+```
+
+Depois de configurar `DATABASE_URL` para o banco Neon separado:
+
+```powershell
+npm run db:import-sqlite -- --apply
+```
+
+O importador preserva IDs e hashes de senha e cancela a operação se as tabelas de destino já tiverem registros.
 
 ## Rotas de exemplo (backend)
 - `/api/versiculo` — retorna um versículo exemplo
