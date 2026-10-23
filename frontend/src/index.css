@@ -44,6 +44,18 @@ button:hover:not(:disabled) {
   filter: brightness(1.06);
 }
 
+button.scripture-reference {
+  display: inline;
+  background: transparent !important;
+  color: var(--revela-gold-ink) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,

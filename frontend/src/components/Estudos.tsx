@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { BibliaPopup } from './BibliaPopup';
 
 interface Estudo {
   id: number;
@@ -48,11 +49,40 @@ export const Estudos: React.FC<EstudosProps> = ({ usuario, perfil, onSair }) => 
   const [estudos, setEstudos] = useState<Estudo[]>([]);
   const [editando, setEditando] = useState<Estudo | null>(null);
   const [visualizando, setVisualizando] = useState<Estudo | null>(null);
+  const [popupRef, setPopupRef] = useState<string | null>(null);
   const [novo, setNovo] = useState({ titulo: '', tema: '', conteudo: '' });
   const [erro, setErro] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filtroTitulo, setFiltroTitulo] = useState('');
   const [filtroTema, setFiltroTema] = useState('');
+
+  const parseConteudo = (texto: string) => {
+    const refRegex = /([1-3]?\s?[A-Za-zÀ-ÿçÇãõéíúâêô\- ]+)\s*(\d+):(\d+)(?:-(\d+))?/gi;
+    const partes: (string | React.ReactNode)[] = [];
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = refRegex.exec(texto)) !== null) {
+      const ref = match[0];
+      const idx = match.index;
+      if (idx > lastIdx) partes.push(texto.slice(lastIdx, idx));
+      partes.push(
+        <button
+          key={idx}
+          type="button"
+          className="scripture-reference"
+          aria-label={`Abrir referência bíblica ${ref}`}
+          onClick={() => setPopupRef(ref)}
+        >
+          {ref}
+        </button>
+      );
+      lastIdx = idx + ref.length;
+    }
+
+    if (lastIdx < texto.length) partes.push(texto.slice(lastIdx));
+    return partes;
+  };
 
   const fetchEstudos = async () => {
     setLoading(true);
@@ -270,12 +300,13 @@ export const Estudos: React.FC<EstudosProps> = ({ usuario, perfil, onSair }) => 
             <div id="estudo-print" style={{ overflowY: 'auto', padding: 32, flex: 1 }}>
               <h2 style={{ color: '#4e54c8', marginBottom: 8 }}>{visualizando.titulo}</h2>
               <div style={{ color: '#4e54c8', fontWeight: 500, marginBottom: 8 }}>Tema: {visualizando.tema}</div>
-              <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{visualizando.conteudo}</div>
+              <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{parseConteudo(visualizando.conteudo)}</div>
               <div style={{ fontSize: 12, color: '#888' }}>Criado em: {new Date(visualizando.dataHora).toLocaleString()} | Por: {visualizando.usuario}</div>
             </div>
           </div>
         </div>
       )}
+      {popupRef && <BibliaPopup referencia={popupRef} onClose={() => setPopupRef(null)} />}
 
     </div>
   );
