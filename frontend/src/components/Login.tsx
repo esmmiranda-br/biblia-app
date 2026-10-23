@@ -53,7 +53,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         flexDirection: 'column',
         gap: '1.5rem',
       }}>
-        <h2 style={{ textAlign: 'center', color: '#4e54c8', margin: 0 }}>Bíblia App</h2>
+        <img
+          src="/logo-aplicativo.jpeg"
+          alt="Revela — Bíblia, estudos e sermões"
+          style={{ width: '100%', maxWidth: 300, alignSelf: 'center' }}
+        />
+        <h2 style={{ textAlign: 'center', color: '#4e54c8', margin: 0 }}>Acesse sua conta</h2>
         <input
           type="text"
           placeholder="Usuário"

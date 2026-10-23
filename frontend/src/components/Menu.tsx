@@ -45,6 +45,11 @@ export const Menu: React.FC<MenuProps> = ({ usuario, onLogout }) => {
         gap: '1.5rem',
         alignItems: 'center',
       }}>
+        <img
+          src="/logo-aplicativo.jpeg"
+          alt="Revela — Bíblia, estudos e sermões"
+          style={{ width: '100%', maxWidth: 280 }}
+        />
         <h2 style={{ color: '#4e54c8', margin: 0 }}>Menu Principal</h2>
         <button style={menuBtnStyle} onClick={() => setTela('sermao')}>Sermão</button>
         <button style={menuBtnStyle} onClick={() => setTela('estudos')}>Estudos</button>
