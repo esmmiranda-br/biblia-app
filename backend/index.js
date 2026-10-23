@@ -4,7 +4,6 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
-const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 
 const app = express();
@@ -34,6 +33,7 @@ if (usePostgres) {
     end: () => pool.end()
   };
 } else {
+  const sqlite3 = require('sqlite3').verbose();
   const sqliteDb = new sqlite3.Database(path.join(__dirname, 'sermoes.db'));
   db = {
     query(sql, params = []) {
