@@ -1,6 +1,6 @@
 # Bíblia-App
 
-Aplicativo para leitura da Bíblia, busca de versículos, navegação por livros e capítulos.
+Aplicativo para leitura da Bíblia, busca de versículos, navegação por livros e capítulos, estudos, sermões e agenda de compromissos.
 
 ## Estrutura do Projeto
 
@@ -34,6 +34,8 @@ No Render, configure `DATABASE_URL` nas variáveis de ambiente do serviço backe
 
 - Acesse http://localhost:3000 para o frontend
 - O frontend consome a API do backend em http://localhost:4000
+- Use **Devocionais** no menu para criar, consultar, editar, imprimir e excluir devocionais com tema, conteúdo, referências bíblicas e opção de compartilhamento.
+- Use **Agenda de Compromissos** no menu para cadastrar e consultar compromissos da igreja. A agenda exibe um calendário mensal com indicadores nos dias ocupados; selecione um dia para ver seus eventos. Ao criar um compromisso, é possível repeti-lo semanalmente por até 52 semanas. Eventos recorrentes podem ser alterados ou excluídos individualmente ou em toda a série. Todos os usuários autenticados podem consultar a agenda; cada usuário pode alterar ou excluir os próprios compromissos, e o administrador pode gerenciar todos.
 
 ## Publicar no Render
 

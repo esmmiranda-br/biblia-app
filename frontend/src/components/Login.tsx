@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 
 
 interface LoginProps {
-  onLogin: (user: { id: number; usuario: string; perfil: string }) => void;
+  onLogin: (user: { id: number; usuario: string; perfil: string; token: string }) => void;
 }
 
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
@@ -102,6 +102,10 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         >
           {loading ? 'Entrando...' : 'Entrar'}
         </button>
+        <footer className="login-branding">
+          <img src="/logo-igreja.png" alt="Comunidade Apostólica Novos Amigos" />
+          <span>by Eduardo Miranda</span>
+        </footer>
       </form>
     </div>
   );

@@ -4,14 +4,17 @@ import { Sermoes } from './Sermoes';
 import { Usuarios } from './Usuarios';
 import Biblia from './Biblia';
 import { Estudos } from './Estudos';
+import { Agenda } from './Agenda';
+import { BackupRestore } from './BackupRestore';
+import { Devocionais } from './Devocionais';
 
 
 interface MenuProps {
-  usuario: { id: number; usuario: string; perfil: string };
+  usuario: { id: number; usuario: string; perfil: string; token: string };
   onLogout: () => void;
 }
 
-type Tela = 'menu' | 'sermao' | 'biblia' | 'usuario' | 'estudos';
+type Tela = 'menu' | 'sermao' | 'biblia' | 'usuario' | 'estudos' | 'devocionais' | 'agenda' | 'backup';
 
 
 
@@ -22,6 +25,17 @@ export const Menu: React.FC<MenuProps> = ({ usuario, onLogout }) => {
   if (tela === 'biblia') return <Biblia onSair={() => setTela('menu')} />;
   if (tela === 'usuario') return <Usuarios usuario={usuario} onSair={() => setTela('menu')} />;
   if (tela === 'estudos') return <Estudos usuario={usuario.usuario} perfil={usuario.perfil} onSair={() => setTela('menu')} />;
+  if (tela === 'devocionais') return <Devocionais usuario={usuario.usuario} perfil={usuario.perfil} onSair={() => setTela('menu')} />;
+  if (tela === 'agenda') return <Agenda usuario={usuario} onSair={() => setTela('menu')} />;
+  if (tela === 'backup') {
+    return (
+      <BackupRestore
+        token={usuario.token}
+        onSair={() => setTela('menu')}
+        onRestoreComplete={onLogout}
+      />
+    );
+  }
 
   return (
     <div style={{
@@ -53,8 +67,13 @@ export const Menu: React.FC<MenuProps> = ({ usuario, onLogout }) => {
         <h2 style={{ color: '#4e54c8', margin: 0 }}>Menu Principal</h2>
         <button style={menuBtnStyle} onClick={() => setTela('sermao')}>Sermão</button>
         <button style={menuBtnStyle} onClick={() => setTela('estudos')}>Estudos</button>
+        <button style={menuBtnStyle} onClick={() => setTela('devocionais')}>Devocionais</button>
+        <button style={menuBtnStyle} onClick={() => setTela('agenda')}>Agenda de Compromissos</button>
         <button style={menuBtnStyle} onClick={() => setTela('biblia')}>Bíblia</button>
         <button style={menuBtnStyle} onClick={() => setTela('usuario')}>Usuário</button>
+        {usuario.perfil === 'admin' && (
+          <button style={menuBtnStyle} onClick={() => setTela('backup')}>Backup e restauração</button>
+        )}
         <button style={{ ...menuBtnStyle, background: '#eee', color: '#4e54c8' }} onClick={onLogout}>Sair</button>
       </div>
     </div>

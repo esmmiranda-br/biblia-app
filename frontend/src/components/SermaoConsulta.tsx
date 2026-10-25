@@ -57,6 +57,15 @@ export const SermaoConsulta: React.FC<SermaoConsultaProps> = ({ nome, conteudo, 
         alignItems: 'center',
         gap: '1.5rem',
       }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
+          <button
+            type="button"
+            style={{ ...btnStyle, background: '#eee', color: '#4e54c8', width: 120 }}
+            onClick={onClose}
+          >
+            Sair
+          </button>
+        </div>
         <h2 style={{ color: '#4e54c8', margin: 0, textAlign: 'center' }}>{nome}</h2>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
           <button onClick={() => setFontSize((f: number) => Math.max(12, f - 2))} style={btnStyle}>A-</button>

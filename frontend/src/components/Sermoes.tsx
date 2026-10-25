@@ -10,9 +10,11 @@ interface Sermao {
   dataHora: string;
   local: string;
   usuario?: string;
+  criadoEm?: string;
+  compartilhado: boolean;
 }
 
-const initialForm = { nome: '', conteudo: '', dataHora: '', local: '' };
+const initialForm = { nome: '', conteudo: '', dataHora: '', local: '', compartilhado: false };
 
 
 interface SermoesProps {
@@ -92,7 +94,13 @@ export const Sermoes: React.FC<SermoesProps> = ({ usuario, onSair }) => {
   const handleEdit = (id: number) => {
     const s = sermoes.find(s => s.id === id);
     if (s) {
-      setForm({ nome: s.nome, conteudo: s.conteudo, dataHora: s.dataHora, local: s.local });
+      setForm({
+        nome: s.nome,
+        conteudo: s.conteudo,
+        dataHora: s.dataHora,
+        local: s.local,
+        compartilhado: s.compartilhado,
+      });
       setEditId(id);
     }
   };
@@ -173,6 +181,15 @@ export const Sermoes: React.FC<SermoesProps> = ({ usuario, onSair }) => {
                 onChange={handleChange}
                 style={inputStyle}
               />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  name="compartilhado"
+                  type="checkbox"
+                  checked={form.compartilhado}
+                  onChange={e => setForm({ ...form, compartilhado: e.target.checked })}
+                />
+                Permitir que outros usuários consultem este sermão
+              </label>
               <button type="submit" style={btnStyle}>{editId ? 'Salvar Alterações' : 'Cadastrar'}</button>
               {editId !== null && (
                 <button type="button" style={{ ...btnStyle, background: '#eee', color: '#4e54c8' }} onClick={() => { setForm({ ...initialForm }); setEditId(null); }}>Cancelar</button>
@@ -190,34 +207,30 @@ export const Sermoes: React.FC<SermoesProps> = ({ usuario, onSair }) => {
         ) : sermoes.length === 0 ? (
           <div style={{ color: '#fff', textAlign: 'center' }}>Nenhum sermão cadastrado.</div>
         ) : (
-          <table style={{ width: '100%', background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
-            <thead>
-              <tr style={{ background: '#4e54c8', color: '#fff' }}>
-                <th style={thTdStyle}>Nome</th>
-                <th style={thTdStyle}>Data/Hora</th>
-                <th style={thTdStyle}>Local</th>
-                <th style={thTdStyle}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sermoes.map(s => (
-                <tr key={s.id}>
-                  <td style={thTdStyle}>{s.nome}</td>
-                  <td style={thTdStyle}>{new Date(s.dataHora).toLocaleString()}</td>
-                  <td style={thTdStyle}>{s.local}</td>
-                  <td style={thTdStyle}>
-                    {(perfil === 'admin' || (perfil === 'edit' && s.usuario === usuarioLogado)) && (
-                      <button style={{ ...btnStyle, padding: '0.25rem 0.75rem', fontSize: 14, marginRight: 8 }} onClick={() => handleEdit(s.id)}>Editar</button>
-                    )}
-                    {(perfil === 'admin' || (perfil === 'edit' && s.usuario === usuarioLogado)) && (
-                      <button style={{ ...btnStyle, background: '#eee', color: '#4e54c8', padding: '0.25rem 0.75rem', fontSize: 14, marginRight: 8 }} onClick={() => handleDelete(s.id)}>Excluir</button>
-                    )}
-                    <button style={{ ...btnStyle, background: '#8f94fb', color: '#fff', padding: '0.25rem 0.75rem', fontSize: 14 }} onClick={() => setConsulta(s)}>Consultar</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          sermoes.map(s => (
+            <article key={s.id} style={{ background: '#fff', borderRadius: 8, padding: 16, marginBottom: 16, boxShadow: '0 2px 8px #0001' }}>
+              <div style={{ fontWeight: 600, fontSize: 18 }}>{s.nome}</div>
+              <div style={{ whiteSpace: 'pre-wrap', margin: '8px 0', maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {s.conteudo.length > 120 ? `${s.conteudo.slice(0, 120)}...` : s.conteudo}
+              </div>
+              <div style={{ color: '#4e54c8', fontWeight: 500, marginBottom: 4 }}>
+                Data/Hora: {new Date(s.dataHora).toLocaleString()} | Local: {s.local}
+              </div>
+              <div style={{ fontSize: 12, color: '#888' }}>
+                Criado em: {new Date(s.criadoEm || s.dataHora).toLocaleString()}
+              </div>
+              <div style={{ color: '#4e54c8', fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+                Criado por: {s.usuario || 'Não informado'}
+              </div>
+              {(perfil === 'admin' || (perfil === 'edit' && s.usuario === usuarioLogado)) && (
+                <>
+                  <button style={{ ...btnStyle, padding: '0.25rem 0.75rem', fontSize: 14, marginRight: 8 }} onClick={() => handleEdit(s.id)}>Editar</button>
+                  <button style={{ ...btnStyle, background: '#eee', color: '#4e54c8', padding: '0.25rem 0.75rem', fontSize: 14, marginRight: 8 }} onClick={() => handleDelete(s.id)}>Excluir</button>
+                </>
+              )}
+              <button style={{ ...btnStyle, background: '#8f94fb', color: '#fff', padding: '0.25rem 0.75rem', fontSize: 14 }} onClick={() => setConsulta(s)}>Consultar</button>
+            </article>
+          ))
         )}
       </div>
     </div>
@@ -241,9 +254,4 @@ const btnStyle: React.CSSProperties = {
   fontWeight: 600,
   cursor: 'pointer',
   transition: 'background 0.2s',
-};
-
-const thTdStyle: React.CSSProperties = {
-  padding: '0.5rem',
-  textAlign: 'left',
 };
